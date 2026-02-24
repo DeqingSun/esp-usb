@@ -105,9 +105,6 @@ static const cdc_acm_host_device_config_t default_dev_config = {
         return true;
     },
     .user_arg = tx_buf,
-#ifdef CDC_HOST_REMOTE_WAKE_SUPPORTED
-    .enable_remote_wakeup = false,
-#endif // CDC_HOST_REMOTE_WAKE_SUPPORTED
 };
 
 // Default driver config
@@ -1408,7 +1405,6 @@ TEST_CASE("device_remote_wakeup", "[host_remote_wake]")
 
     cdc_acm_dev_hdl_t cdc_dev = NULL;
     cdc_acm_host_device_config_t dev_config = default_dev_config;
-    dev_config.enable_remote_wakeup = true;
 
     printf("Opening CDC-ACM device\n");
     TEST_ASSERT_EQUAL(ESP_OK, cdc_acm_host_open(0x303A, 0x4002, 0, &dev_config, &cdc_dev)); // 0x303A:0x4002 (TinyUSB Dual CDC device)
@@ -1419,6 +1415,9 @@ TEST_CASE("device_remote_wakeup", "[host_remote_wake]")
     }
     vTaskDelay(10); // Wait until responses are processed
     TEST_ASSERT_EQUAL(NUM_ITERATIONS, nb_of_responses);
+
+    // Enable remote wakeup
+    TEST_ASSERT_EQUAL(ESP_OK, cdc_acm_host_enable_remote_wakeup(cdc_dev, true));
 
     printf("Suspending the root port\n");
     TEST_ASSERT_EQUAL(ESP_OK, usb_host_lib_root_port_suspend());
@@ -1446,10 +1445,9 @@ TEST_CASE("device_remote_wakeup", "[host_remote_wake]")
 /**
  * @brief Test: device remote wakeup whit multiple interfaces
  *
- * #. open cdc_dev1 with remote wakeup enabled and cdc_dev2 with remote wakeup disabled
+ * #. open 2 pseudo devices, enable remote wakeup by dev1, disable remote wakeup by dev2
  * #. suspend the root port, expect no remote wakeup event
- * #. resume the root port and close both devices
- * #. open cdc_dev2 with remote wakeup disabled and cdc_dev2 with remote wakeup enabled
+ * #. resume the root port, disable remote wakeup by dev1 (already disabled), enable remote wakeup by dev2
  * #. suspend the root port, expect remote wakeup from from device
  * #. cleanup
  */
@@ -1460,16 +1458,16 @@ TEST_CASE("device_remote_wakeup_multiple_interfaces", "[host_remote_wake]")
     cdc_acm_dev_hdl_t cdc_dev1 = NULL, cdc_dev2 = NULL;
     cdc_acm_host_device_config_t dev1_config = default_dev_config;
     cdc_acm_host_device_config_t dev2_config = default_dev_config;
-    dev1_config.enable_remote_wakeup = true;
-    dev2_config.enable_remote_wakeup = false;
 
     printf("Opening CDC-ACM devices\n");
-    // Open device 1 with remote wakeup enabled
     TEST_ASSERT_EQUAL(ESP_OK, cdc_acm_host_open(0x303A, 0x4002, 0, &dev1_config, &cdc_dev1)); // 0x303A:0x4002 (TinyUSB Dual CDC device)
-    // Open device 2 with remote wakeup disabled
     TEST_ASSERT_EQUAL(ESP_OK, cdc_acm_host_open(0x303A, 0x4002, 2, &dev2_config, &cdc_dev2)); // 0x303A:0x4002 (TinyUSB Dual CDC device)
     TEST_ASSERT_NOT_NULL(cdc_dev1);
     TEST_ASSERT_NOT_NULL(cdc_dev2);
+
+    // Enable remote wakeup by cdc_dev1 and disable it by cdc_dev2
+    TEST_ASSERT_EQUAL(ESP_OK, cdc_acm_host_enable_remote_wakeup(cdc_dev1, true));
+    TEST_ASSERT_EQUAL(ESP_OK, cdc_acm_host_enable_remote_wakeup(cdc_dev2, false));
 
     // Suspend the device and expect 2 suspend events
     printf("Suspending the root port\n");
@@ -1488,19 +1486,11 @@ TEST_CASE("device_remote_wakeup_multiple_interfaces", "[host_remote_wake]")
     wait_for_app_event(&resume_event, 100);
     wait_for_app_event(&resume_event, 100);
 
-    printf("Closing devices");
-    TEST_ASSERT_EQUAL(ESP_OK, cdc_acm_host_close(cdc_dev1));
-    TEST_ASSERT_EQUAL(ESP_OK, cdc_acm_host_close(cdc_dev2));
-    cdc_dev1 = NULL;
-    cdc_dev2 = NULL;
-
-    printf("Opening CDC-ACM devices\n");
-    // Open device 2 with remote wakeup disabled
-    TEST_ASSERT_EQUAL(ESP_OK, cdc_acm_host_open(0x303A, 0x4002, 2, &dev2_config, &cdc_dev2)); // 0x303A:0x4002 (TinyUSB Dual CDC device)
-    // Open device 1 with remote wakeup enabled
-    TEST_ASSERT_EQUAL(ESP_OK, cdc_acm_host_open(0x303A, 0x4002, 0, &dev1_config, &cdc_dev1)); // 0x303A:0x4002 (TinyUSB Dual CDC device)
-    TEST_ASSERT_NOT_NULL(cdc_dev1);
-    TEST_ASSERT_NOT_NULL(cdc_dev2);
+    // Disable remote wakeup by cdc_dev1 (should be already disabled) and enable it by cdc_dev2
+    TEST_ASSERT_EQUAL(ESP_OK, cdc_acm_host_enable_remote_wakeup(cdc_dev1, false));
+    TEST_ASSERT_EQUAL(ESP_OK, cdc_acm_host_enable_remote_wakeup(cdc_dev2, true));
+    // Try to enable remote wakeup again
+    TEST_ASSERT_EQUAL(ESP_OK, cdc_acm_host_enable_remote_wakeup(cdc_dev2, true));
 
     // Suspend the device and expect 2 suspend events
     printf("Suspending the root port\n");
@@ -1508,10 +1498,10 @@ TEST_CASE("device_remote_wakeup_multiple_interfaces", "[host_remote_wake]")
     wait_for_app_event(&suspend_event, 100);
     wait_for_app_event(&suspend_event, 100);
 
-    // Remote wakeup was first disabled (no set) by cdc_dev2, then enabled by cdc_dev1
+    // Remote wakeup was first disabled (not set) by cdc_dev1, then enabled by cdc_dev2
     // A remote wakeup event shall be generated from the device
 
-    // Expect resume event (Remote wakeup)
+    // Expect 2 resume events (Remote wakeup)
     wait_for_app_event(&resume_event, 500);
     wait_for_app_event(&resume_event, 500);
 
@@ -1541,7 +1531,6 @@ TEST_CASE("device_remote_wakeup_sudden_disconnect", "[host_remote_wake_dconn]")
 
     cdc_acm_dev_hdl_t cdc_dev = NULL;
     cdc_acm_host_device_config_t dev_config = default_dev_config;
-    dev_config.enable_remote_wakeup = true;
 
     printf("Opening CDC-ACM device\n");
     wait_for_app_event(&new_dev_event, 100);
@@ -1553,6 +1542,9 @@ TEST_CASE("device_remote_wakeup_sudden_disconnect", "[host_remote_wake_dconn]")
     }
     vTaskDelay(10); // Wait until responses are processed
     TEST_ASSERT_EQUAL(NUM_ITERATIONS, nb_of_responses);
+
+    // Enable remote wakeup
+    TEST_ASSERT_EQUAL(ESP_OK, cdc_acm_host_enable_remote_wakeup(cdc_dev, true));
 
     printf("Suspending the root port\n");
     TEST_ASSERT_EQUAL(ESP_OK, usb_host_lib_root_port_suspend());

@@ -31,3 +31,7 @@ target_sources(${COMPONENT_LIB} PRIVATE "${original_usb_dir}/src/usb_private.c")
 target_sources(${COMPONENT_LIB} PRIVATE "${original_usb_dir}/src/usb_helpers.c")
 # This definition is missing for linux target, so we add it here
 target_compile_definitions(${COMPONENT_LIB} PRIVATE -DSOC_USB_OTG_PERIPH_NUM=2)
+# Set public symbol REMOTE_WAKE_HAL_SUPPORTED, which is normally set in usb component cmake
+# and depends on remote wakeup feature presence in USB HAL/LL
+set(REMOTE_WAKE_HAL_SUPPORTED ON)
+target_compile_definitions(${COMPONENT_LIB} PUBLIC REMOTE_WAKE_HAL_SUPPORTED)
